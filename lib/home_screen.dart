@@ -1,10 +1,10 @@
 import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -22,11 +22,32 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     log("HomeScreen - initState called");
     super.initState();
+    _initializeSpeech();
+  }
+
+  Future<void> _initializeSpeech() async {
+    log("Initializing speech recognition");
     try {
-      _speech.initialize();
-      log("Speech initialization successful");
+      var status = await Permission.microphone.status;
+      log("Current microphone permission status: $status");
+
+      if (status.isDenied) {
+        log("Requesting microphone permission");
+        status = await Permission.microphone.request();
+        log("Microphone permission request result: $status");
+      }
+
+      if (status.isGranted) {
+        var speechInitialized = await _speech.initialize(
+          onStatus: (status) => log("Speech status: $status"),
+          onError: (error) => log("Speech error: $error"),
+        );
+        log("Speech initialization result: $speechInitialized");
+      } else {
+        log("Microphone permission denied");
+      }
     } catch (e) {
-      log("Error initializing speech: $e");
+      log("Error in _initializeSpeech: $e");
     }
   }
 
@@ -34,41 +55,57 @@ class _HomeScreenState extends State<HomeScreen> {
     log("HomeScreen - _startListening called");
     if (!_isListening) {
       try {
-        bool available = await _speech.initialize(
-          onStatus: (status) {
-            log("Speech Status Change: $status");
-            if (status == "notListening") {
-              log("Speech stopped listening");
-            }
-          },
-          onError: (errorNotification) {
-            log("Speech Error: ${errorNotification.errorMsg}");
-            log("Error details: ${errorNotification.permanent}");
-          },
-        );
-        log("Speech availability check result: $available");
+        var status = await Permission.microphone.status;
+        log("Checking microphone permission: $status");
 
-        if (available) {
-          setState(() {
-            _isListening = true;
-            log("State updated - listening started");
-          });
+        if (!status.isGranted) {
+          log("Requesting microphone permission");
+          status = await Permission.microphone.request();
+          log("Permission request result: $status");
+        }
 
-          _speech.listen(
-            onResult: (result) {
-              log("Speech result received - Confidence: ${result.confidence}");
-              log("Recognized words: ${result.recognizedWords}");
-              setState(() {
-                _spokenText = result.recognizedWords;
-                log("State updated - spoken text: $_spokenText");
-              });
+        if (status.isGranted) {
+          bool available = await _speech.initialize(
+            onStatus: (status) {
+              log("Speech Status Change: $status");
+              if (status == "notListening") {
+                log("Speech stopped listening");
+              }
+            },
+            onError: (errorNotification) {
+              log("Speech Error: ${errorNotification.errorMsg}");
+              log("Error details: ${errorNotification.permanent}");
             },
           );
+          log("Speech availability check result: $available");
+
+          if (available) {
+            setState(() {
+              _isListening = true;
+              log("State updated - listening started");
+            });
+
+            _speech.listen(
+              onResult: (result) {
+                log("Speech result received - Confidence: ${result.confidence}");
+                log("Recognized words: ${result.recognizedWords}");
+                setState(() {
+                  _spokenText = result.recognizedWords;
+                  log("State updated - spoken text: $_spokenText");
+                });
+              },
+            );
+          } else {
+            log("Speech recognition not available on this device");
+            _showError("Speech recognition not available on this device");
+          }
         } else {
-          log("Speech recognition not available on this device");
+          log("Microphone permission denied");
+          _showError("Microphone permission is required");
         }
       } catch (e) {
         log("Error in _startListening: $e");
+        _showError("Error starting speech recognition");
       }
     }
   }
@@ -84,21 +121,24 @@ class _HomeScreenState extends State<HomeScreen> {
       await _speech.stop();
       log("Speech stopped successfully");
 
-      if (_spokenText.isNotEmpty) {
+      if (_spokenText.isNotEmpty &&
+          _spokenText != "Press the button and speak") {
         log("Initiating translation for text: $_spokenText");
         _translateToCatLanguage(_spokenText);
       } else {
-        log("No text to translate - spoken text is empty");
+        log("No text to translate - spoken text is empty or default");
+        _showError("No speech detected");
       }
     } catch (e) {
       log("Error in _stopListening: $e");
+      _showError("Error stopping speech recognition");
     }
   }
 
   Future<void> _translateToCatLanguage(String inputText) async {
     log("HomeScreen - _translateToCatLanguage called with input: $inputText");
     const apiKey = "YOUR_OPENAI_API_KEY";
-    const apiUrl = "https://api.openai.com/v1/completions";
+    const apiUrl = "https://api.openai.com/v1/chat/completions"; // Updated URL
 
     try {
       log("Preparing API request to OpenAI");
@@ -118,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             {"role": "user", "content": "Translate to cat language: $inputText"}
           ],
-          "max_tokens": 20
+          "max_tokens": 50
         }),
       );
 
@@ -144,23 +184,37 @@ class _HomeScreenState extends State<HomeScreen> {
           _translatedText = "Translation failed!";
           log("State updated - translation failure message set");
         });
+        _showError("Failed to translate to cat language");
       }
     } catch (e) {
       log("Error in _translateToCatLanguage: $e");
       setState(() {
-        _translatedText = "Translation error: $e";
+        _translatedText = "Translation error occurred";
       });
+      _showError("Error during translation");
     }
   }
 
   Future<void> _playCatSound() async {
     log("HomeScreen - _playCatSound called");
     try {
-      await _audioPlayer.play(AssetSource('meow.mp3'));
+      await _audioPlayer.play(AssetSource('assets/sounds/meow.mp3'));
       log("Cat sound played successfully");
     } catch (e) {
       log("Error playing cat sound: $e");
+      _showError("Error playing cat sound");
     }
+  }
+
+  void _showError(String message) {
+    log("Showing error message: $message");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
@@ -178,30 +232,60 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(_spokenText, style: TextStyle(fontSize: 18)),
+            Card(
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  _spokenText,
+                  style: TextStyle(fontSize: 18),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
             SizedBox(height: 20),
-            Text(_translatedText,
-                style: TextStyle(
+            Card(
+              elevation: 4,
+              color: Colors.orange.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  _translatedText,
+                  style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: Colors.orange)),
+                    color: Colors.orange.shade900,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
             SizedBox(height: 30),
             AnimatedOpacity(
               opacity: _isListening ? 0.0 : 1.0,
               duration: Duration(milliseconds: 300),
-              child: ElevatedButton(
+              child: ElevatedButton.icon(
                 onPressed: _isListening ? null : _startListening,
-                child: Text("Start Speaking"),
+                icon: Icon(Icons.mic),
+                label: Text("Start Speaking"),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  textStyle: TextStyle(fontSize: 18),
+                ),
               ),
             ),
             if (_isListening)
-              ElevatedButton(
+              ElevatedButton.icon(
                 onPressed: _stopListening,
+                icon: Icon(Icons.stop),
+                label: Text("Stop Listening"),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
+                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  textStyle: TextStyle(fontSize: 18),
                 ),
-                child: Text("Stop Listening"),
               ),
           ],
         ),
