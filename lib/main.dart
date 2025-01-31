@@ -1,21 +1,38 @@
+// main.dart
 import 'package:flutter/material.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'home_screen.dart';
+import 'home_screen2.dart';
+import 'micro_phone.dart';
 
 void main() {
-  runApp(CommunicateWithCatApp());
+  runApp(MyApp());
 }
 
-class CommunicateWithCatApp extends StatelessWidget {
+class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      title: 'Cat Translator',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      home: FutureBuilder<bool>(
+        future: Permission.microphone.status.isGranted,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          
+          if (snapshot.data == true) {
+            return HomeScreen();
+          }
+          
+          return MicrophonePermissionScreen();
+        },
+      ),
     );
   }
 }

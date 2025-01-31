@@ -4,7 +4,6 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -28,24 +27,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _initializeSpeech() async {
     log("Initializing speech recognition");
     try {
-      var status = await Permission.microphone.status;
-      log("Current microphone permission status: $status");
-
-      if (status.isDenied) {
-        log("Requesting microphone permission");
-        status = await Permission.microphone.request();
-        log("Microphone permission request result: $status");
-      }
-
-      if (status.isGranted) {
-        var speechInitialized = await _speech.initialize(
-          onStatus: (status) => log("Speech status: $status"),
-          onError: (error) => log("Speech error: $error"),
-        );
-        log("Speech initialization result: $speechInitialized");
-      } else {
-        log("Microphone permission denied");
-      }
+      var speechInitialized = await _speech.initialize(
+        onStatus: (status) => log("Speech status: $status"),
+        onError: (error) => log("Speech error: $error"),
+      );
+      log("Speech initialization result: $speechInitialized");
     } catch (e) {
       log("Error in _initializeSpeech: $e");
     }
@@ -55,53 +41,39 @@ class _HomeScreenState extends State<HomeScreen> {
     log("HomeScreen - _startListening called");
     if (!_isListening) {
       try {
-        var status = await Permission.microphone.status;
-        log("Checking microphone permission: $status");
+        bool available = await _speech.initialize(
+          onStatus: (status) {
+            log("Speech Status Change: $status");
+            if (status == "notListening") {
+              log("Speech stopped listening");
+            }
+          },
+          onError: (errorNotification) {
+            log("Speech Error: ${errorNotification.errorMsg}");
+            log("Error details: ${errorNotification.permanent}");
+          },
+        );
+        log("Speech availability check result: $available");
 
-        if (!status.isGranted) {
-          log("Requesting microphone permission");
-          status = await Permission.microphone.request();
-          log("Permission request result: $status");
-        }
+        if (available) {
+          setState(() {
+            _isListening = true;
+            log("State updated - listening started");
+          });
 
-        if (status.isGranted) {
-          bool available = await _speech.initialize(
-            onStatus: (status) {
-              log("Speech Status Change: $status");
-              if (status == "notListening") {
-                log("Speech stopped listening");
-              }
-            },
-            onError: (errorNotification) {
-              log("Speech Error: ${errorNotification.errorMsg}");
-              log("Error details: ${errorNotification.permanent}");
+          _speech.listen(
+            onResult: (result) {
+              log("Speech result received - Confidence: ${result.confidence}");
+              log("Recognized words: ${result.recognizedWords}");
+              setState(() {
+                _spokenText = result.recognizedWords;
+                log("State updated - spoken text: $_spokenText");
+              });
             },
           );
-          log("Speech availability check result: $available");
-
-          if (available) {
-            setState(() {
-              _isListening = true;
-              log("State updated - listening started");
-            });
-
-            _speech.listen(
-              onResult: (result) {
-                log("Speech result received - Confidence: ${result.confidence}");
-                log("Recognized words: ${result.recognizedWords}");
-                setState(() {
-                  _spokenText = result.recognizedWords;
-                  log("State updated - spoken text: $_spokenText");
-                });
-              },
-            );
-          } else {
-            log("Speech recognition not available on this device");
-            _showError("Speech recognition not available on this device");
-          }
         } else {
-          log("Microphone permission denied");
-          _showError("Microphone permission is required");
+          log("Speech recognition not available on this device");
+          _showError("Speech recognition not available on this device");
         }
       } catch (e) {
         log("Error in _startListening: $e");
