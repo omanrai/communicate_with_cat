@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:http/http.dart' as http;
@@ -18,85 +20,160 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void initState() {
+    log("HomeScreen - initState called");
     super.initState();
-    _speech.initialize();
+    try {
+      _speech.initialize();
+      log("Speech initialization successful");
+    } catch (e) {
+      log("Error initializing speech: $e");
+    }
   }
 
   Future<void> _startListening() async {
+    log("HomeScreen - _startListening called");
     if (!_isListening) {
-      bool available = await _speech.initialize(
-        onStatus: (status) => print("Status: $status"),
-        onError: (error) => print("Error: $error"),
-      );
-      if (available) {
-        setState(() => _isListening = true);
-        _speech.listen(
-          onResult: (result) {
-            setState(() {
-              _spokenText = result.recognizedWords;
-            });
+      try {
+        bool available = await _speech.initialize(
+          onStatus: (status) {
+            log("Speech Status Change: $status");
+            if (status == "notListening") {
+              log("Speech stopped listening");
+            }
+          },
+          onError: (errorNotification) {
+            log("Speech Error: ${errorNotification.errorMsg}");
+            log("Error details: ${errorNotification.permanent}");
           },
         );
+        log("Speech availability check result: $available");
+
+        if (available) {
+          setState(() {
+            _isListening = true;
+            log("State updated - listening started");
+          });
+
+          _speech.listen(
+            onResult: (result) {
+              log("Speech result received - Confidence: ${result.confidence}");
+              log("Recognized words: ${result.recognizedWords}");
+              setState(() {
+                _spokenText = result.recognizedWords;
+                log("State updated - spoken text: $_spokenText");
+              });
+            },
+          );
+        } else {
+          log("Speech recognition not available on this device");
+        }
+      } catch (e) {
+        log("Error in _startListening: $e");
       }
     }
   }
 
   Future<void> _stopListening() async {
-    setState(() => _isListening = false);
-    await _speech.stop();
-    if (_spokenText.isNotEmpty) {
-      _translateToCatLanguage(_spokenText);
+    log("HomeScreen - _stopListening called");
+    try {
+      setState(() {
+        _isListening = false;
+        log("State updated - listening stopped");
+      });
+
+      await _speech.stop();
+      log("Speech stopped successfully");
+
+      if (_spokenText.isNotEmpty) {
+        log("Initiating translation for text: $_spokenText");
+        _translateToCatLanguage(_spokenText);
+      } else {
+        log("No text to translate - spoken text is empty");
+      }
+    } catch (e) {
+      log("Error in _stopListening: $e");
     }
   }
 
   Future<void> _translateToCatLanguage(String inputText) async {
-    const apiKey = "YOUR_OPENAI_API_KEY"; // Replace with your chatGPT API key
+    log("HomeScreen - _translateToCatLanguage called with input: $inputText");
+    const apiKey = "YOUR_OPENAI_API_KEY";
     const apiUrl = "https://api.openai.com/v1/completions";
 
-    final response = await http.post(
-      Uri.parse(apiUrl),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer $apiKey",
-      },
-      body: jsonEncode({
-        //put model version in which you want to translate from
-        "model": "gpt-3.5-turbo",
-        "messages": [
-          {
-            "role": "system",
-            "content":
-                "You are a cat that translates human speech into cat meows."
-          },
-          {"role": "user", "content": "Translate to cat language: $inputText"}
-        ],
-        "max_tokens": 20
-      }),
-    );
+    try {
+      log("Preparing API request to OpenAI");
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $apiKey",
+        },
+        body: jsonEncode({
+          "model": "gpt-3.5-turbo",
+          "messages": [
+            {
+              "role": "system",
+              "content":
+                  "You are a cat that translates human speech into cat meows."
+            },
+            {"role": "user", "content": "Translate to cat language: $inputText"}
+          ],
+          "max_tokens": 20
+        }),
+      );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      String catTranslation = data["choices"][0]["message"]["content"];
+      log("API Response Status Code: ${response.statusCode}");
+      log("API Response Body: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        String catTranslation = data["choices"][0]["message"]["content"];
+        log("Translation successful: $catTranslation");
+
+        setState(() {
+          _translatedText = catTranslation;
+          log("State updated - translated text: $_translatedText");
+        });
+
+        _playCatSound();
+      } else {
+        log("API Error - Status Code: ${response.statusCode}");
+        log("Error Response: ${response.body}");
+
+        setState(() {
+          _translatedText = "Translation failed!";
+          log("State updated - translation failure message set");
+        });
+      }
+    } catch (e) {
+      log("Error in _translateToCatLanguage: $e");
       setState(() {
-        _translatedText = catTranslation;
-      });
-      _playCatSound();
-    } else {
-      setState(() {
-        _translatedText = "Translation failed!";
+        _translatedText = "Translation error: $e";
       });
     }
   }
 
   Future<void> _playCatSound() async {
-    await _audioPlayer
-        .play(AssetSource('meow.mp3')); // Add a cat sound to your assets
+    log("HomeScreen - _playCatSound called");
+    try {
+      await _audioPlayer.play(AssetSource('meow.mp3'));
+      log("Cat sound played successfully");
+    } catch (e) {
+      log("Error playing cat sound: $e");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    log("HomeScreen - build called. isListening: $_isListening");
     return Scaffold(
-      appBar: AppBar(title: Text("Communicate with Cat")),
+      appBar: AppBar(
+        title: Text("Communicate with Cat"),
+        elevation: 0,
+        centerTitle: true,
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -110,13 +187,37 @@ class _HomeScreenState extends State<HomeScreen> {
                     fontWeight: FontWeight.bold,
                     color: Colors.orange)),
             SizedBox(height: 30),
-            ElevatedButton(
-              onPressed: _isListening ? _stopListening : _startListening,
-              child: Text(_isListening ? "Stop Listening" : "Start Speaking"),
+            AnimatedOpacity(
+              opacity: _isListening ? 0.0 : 1.0,
+              duration: Duration(milliseconds: 300),
+              child: ElevatedButton(
+                onPressed: _isListening ? null : _startListening,
+                child: Text("Start Speaking"),
+              ),
             ),
+            if (_isListening)
+              ElevatedButton(
+                onPressed: _stopListening,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                ),
+                child: Text("Stop Listening"),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    log("HomeScreen - dispose called");
+    try {
+      _audioPlayer.dispose();
+      log("AudioPlayer disposed successfully");
+    } catch (e) {
+      log("Error disposing AudioPlayer: $e");
+    }
+    super.dispose();
   }
 }
